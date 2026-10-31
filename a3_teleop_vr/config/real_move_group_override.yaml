@@ -1,0 +1,10 @@
+# real_teleop.launch.py 专用：真机只有双臂经 MC 驱动（腿/腰/头由 MC 自身
+# 站立/行走栈控制，不经 MoveIt）。把 move_group 的 simple_controller_manager
+# 收敛到双臂两个控制器，避免它对不存在的腿/腰/头控制器发 goal 报错。
+# 节点名 move_group 精确匹配优先于 a3_plan_demo_params.yaml 的 /** 通配。
+move_group:
+  ros__parameters:
+    moveit_simple_controller_manager:
+      controller_names:
+        - left_arm_controller
+        - right_arm_controller

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>a3_moveit_config</name>
+  <version>0.0.1</version>
+  <description>
+    智元 A3_ULTRA_T2D0 全身模型的 MoveIt 规划演示配置。
+    URDF/SRDF 来源于 a3_ultra_isaaclab/urdf/model_planning.*，
+    在原始 SRDF（只有 disable_collisions）基础上补充了规划组定义。
+  </description>
+  <maintainer email="demo@example.com">demo</maintainer>
+  <license>BSD</license>
+</package>

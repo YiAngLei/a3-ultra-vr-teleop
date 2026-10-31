@@ -1,0 +1,17 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 运行产物
+logs/
+*.log
+
+# 系统垃圾
+.DS_Store
+
+# 智元版权模型的派生文件（由 a3_moveit_demo/scripts/setup_robot_model.sh 生成，不入库）
+/a3_moveit_demo/src/a3_moveit_config/config/a3_ultra_t2d0.urdf
+/a3_moveit_demo/src/a3_moveit_config/config/a3_ultra_t2d0.srdf
+/a3_moveit_demo/src/a3_moveit_config/config/joint_limits.yaml
+/a3_moveit_demo/src/a3_moveit_config/config/a3_plan_demo_params.yaml
+/a3_moveit_demo/src/a3_moveit_config/urdf/a3_ultra_t2d0_ros2control.urdf
