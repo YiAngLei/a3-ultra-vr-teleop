@@ -1,7 +1,7 @@
 #!/bin/bash
 # 停掉 start_domain_bridge.sh 起的全部管道进程。
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for f in "$HERE"/logs/pipe_*.pid; do
+for f in "$HERE"/logs/pipe_*.pid "$HERE"/logs/locomotion_relay.pid; do
     [ -f "$f" ] || continue
     pid="$(cat "$f")"
     if kill -0 "$pid" 2>/dev/null; then

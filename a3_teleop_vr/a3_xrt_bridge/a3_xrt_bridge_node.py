@@ -9,8 +9,11 @@ xrobotoolkit_sdk 提供的**房间锚定**手柄/头显位姿——与 XRoboTool
 发布话题与 a3_teleop_bridge（OpenArmX 兼容桥）**完全同名**，a3_streaming_teleop
 及 fake_pico_publisher 无需任何改动即可切换本桥：
 
-  /pico_<side>_controller/{pose,grip,trigger,rate}
+  /pico_<side>_controller/{pose,grip,trigger,rate,axis}
   /pico_right_controller/button_b、/pico_left_controller/button_y
+
+axis 为摇杆（SDK get_<side>_axis）：data=[x 左右(+右), y 前后(+前)]，
+归一化 -1~1，摇杆点击键暂未发布（locomotion_teleop.py 消费 axis 驱动行走）。
 
 与 OpenArmX 桥的语义差异：
 - rate 调速档：SDK 无档位概念，默认用**扳机当快进键**（trigger>0.5 -> 1.0 快档，
@@ -28,7 +31,7 @@ xrobotoolkit_sdk 提供的**房间锚定**手柄/头显位姿——与 XRoboTool
 import rclpy
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32
+from std_msgs.msg import Bool, Float32, Float32MultiArray
 from tf2_ros import TransformBroadcaster
 
 import xrobotoolkit_sdk as xrt
@@ -78,6 +81,11 @@ class XrtBridge(Node):
             s: self.create_publisher(Float32, f"pico_{s}_controller/rate", 10)
             for s in HANDS
         }
+        self._axis_pub = {
+            s: self.create_publisher(Float32MultiArray,
+                                     f"pico_{s}_controller/axis", 10)
+            for s in HANDS
+        }
         self._btn_pub = {
             "right": self.create_publisher(Bool, "pico_right_controller/button_b", 10),
             "left": self.create_publisher(Bool, "pico_left_controller/button_y", 10),
@@ -94,6 +102,7 @@ class XrtBridge(Node):
                    "right": xrt.get_right_controller_pose}
         grip_fn = {"left": xrt.get_left_grip, "right": xrt.get_right_grip}
         trigger_fn = {"left": xrt.get_left_trigger, "right": xrt.get_right_trigger}
+        axis_fn = {"left": xrt.get_left_axis, "right": xrt.get_right_axis}
         stamp_ns = xrt.get_time_stamp_ns()
         stamp = self.get_clock().now().to_msg() if stamp_ns <= 0 else \
             rclpy.time.Time(nanoseconds=stamp_ns).to_msg()
@@ -113,6 +122,10 @@ class XrtBridge(Node):
                     Float32(data=1.0 if trig > 0.5 else 0.1))
             else:
                 self._rate_pub[side].publish(Float32(data=0.1))
+
+            axis = axis_fn[side]() or [0.0, 0.0]
+            self._axis_pub[side].publish(
+                Float32MultiArray(data=[float(axis[0]), float(axis[1])]))
 
             if raw is None:
                 continue

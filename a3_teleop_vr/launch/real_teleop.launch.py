@@ -12,8 +12,9 @@
   move_group（MoveIt 规划主节点，控制器白名单收敛到双臂，见 config/real_move_group_override.yaml）
   rviz2（可选，MotionPlanning 显示；拖小球 Plan&Execute = 真机手臂）
 
-联动（teleop:=true，一条命令同起规划栈 + 流式遥操作）：Pico 经 a3_teleop_bridge
-收手柄报文，a3_streaming_teleop 用默认 backend 发 /<side>_arm_controller/
+联动（teleop:=true，一条命令同起规划栈 + 流式遥操作）：Pico 经 a3_xrt_bridge
+（XRoboToolkit PC Service SDK，bridge_impl 默认 xrt）收手柄报文，
+a3_streaming_teleop 用默认 backend 发 /<side>_arm_controller/
 joint_trajectory 话题，进 a3_mc_controller 的流式入口，与 RViz/motion_action
 的 action goal 走完全相同的限位/限速/低通安全链。手柄流式控制期间 RViz 正在
 执行的轨迹会被抢占（显示失败属预期，机器人保持被接管时刻的安全位姿）；
@@ -36,11 +37,12 @@ joint_trajectory 话题，进 a3_mc_controller 的流式入口，与 RViz/motion
   rviz    true/false（默认 true）
   teleop  true/false（默认 false）：true 时启动 a3_streaming_teleop 流式遥操作节点
           （默认 backend，话题进 a3_mc_controller；B/Y 键在 move_group 在场时也可用）
-  bridge  true/false（默认 false）：true 时启动本工程的 a3_teleop_bridge
-          （UDP 接收 Pico 报文）。若已在运行 OpenArmX 的 bridge，保持 false，
-          两者会争抢 5100 端口。
-  auto_calib true/false（默认 false）：捕获瞬间按 A=R_ee0⁻¹·R_hand0 自动标定遥操作
-          映射矩阵（世界一致映射）。映射方向不对（镜像/反向）时开。
+  bridge  true/false（默认 false）：true 时启动桥接节点。
+  bridge_impl xrt（默认）/openarmx：bridge:=true 时起哪个桥。
+          xrt = a3_xrt_bridge（XRoboToolkit PC Service SDK，位姿房间锚定，
+          还发 xrt -> xrt_<side>_controller TF）；openarmx = a3_teleop_bridge
+          （老 OpenArmX 兼容 UDP 桥，监听 5100 端口，与外部 OpenArmX bridge
+          二选一，勿同时开）。
 """
 import os
 from pathlib import Path
@@ -48,7 +50,7 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 PKG = Path(__file__).resolve().parents[1]
@@ -69,7 +71,11 @@ def generate_launch_description():
     rviz = LaunchConfiguration("rviz")
     teleop = LaunchConfiguration("teleop")
     bridge = LaunchConfiguration("bridge")
-    calib_pair = ["auto_calib:=", LaunchConfiguration("auto_calib")]
+    bridge_impl = LaunchConfiguration("bridge_impl")
+    bridge_xrt = IfCondition(PythonExpression(
+        ["'", bridge, "' == 'true' and '", bridge_impl, "' == 'xrt'"]))
+    bridge_openarmx = IfCondition(PythonExpression(
+        ["'", bridge, "' == 'true' and '", bridge_impl, "' == 'openarmx'"]))
     ros2control_text = ROS2CONTROL_FILE.read_text(encoding="utf-8")
     teleop_args = [
         str(PKG / "scripts" / "a3_streaming_teleop.py"),
@@ -82,6 +88,7 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("teleop", default_value="false"),
             DeclareLaunchArgument("bridge", default_value="false"),
+            DeclareLaunchArgument("bridge_impl", default_value="xrt"),
             DeclareLaunchArgument("auto_calib", default_value="false"),
             Node(
                 package="robot_state_publisher",
@@ -131,8 +138,16 @@ def generate_launch_description():
             # 注意不能像 teleop_vr.launch.py real:=true 那样覆盖 mc_arm backend。
             Node(
                 executable="/usr/bin/python3.12",
-                arguments=teleop_args + ["-p", calib_pair],
+                arguments=teleop_args,
                 condition=IfCondition(teleop),
+                output="screen",
+            ),
+            Node(
+                executable="/usr/bin/python3.12",
+                arguments=[
+                    str(PKG / "a3_xrt_bridge" / "a3_xrt_bridge_node.py"),
+                ],
+                condition=bridge_xrt,
                 output="screen",
             ),
             Node(
@@ -140,7 +155,7 @@ def generate_launch_description():
                 arguments=[
                     str(PKG / "a3_teleop_bridge" / "a3_teleop_bridge_node.py"),
                 ],
-                condition=IfCondition(bridge),
+                condition=bridge_openarmx,
                 output="screen",
             ),
         ]

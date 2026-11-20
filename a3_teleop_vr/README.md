@@ -59,6 +59,49 @@ ros2 launch "$PWD"/launch/teleop_vr.launch.py bridge:=true   # bridge_impl 默�
 
 ## 命令速查（2026-11-20 全部实测验证）
 
+### 实机每日流程（模式③：RViz + 流式遥操作 + 可选摇杆走路）
+
+**启动（按顺序）：**
+
+```bash
+# 0) 前提：机器人已开机、MC 处于 MOTION 状态、眼镜 XRoboToolkit App 已连
+#    （PC Service IP 填 192.168.43.5，Head+Controller 勾上，Send ON）
+
+# 1) 机器人端（ssh agi@192.168.43.10）
+~/.local/bin/aimcli em stop motion_player        # 若在运行（官方要求停止才收指令）
+cd /agibot/data/home/agi/Desktop/teleop_vr_ws/a3_robot_teleop
+bash start_domain_bridge.sh all                  # 状态桥+指令桥+走路链（loco）
+
+# 2) PC 端
+bash /opt/apps/roboticsservice/runService.sh     # PC Service（脚本自行后台化）
+source ~/AimSim/a3_teleop_vr/setup_teleop_env.bash
+export ROS_DOMAIN_ID=42
+ros2 launch ~/AimSim/a3_teleop_vr/launch/real_teleop.launch.py teleop:=true bridge:=true
+
+# 3) 摇杆走路（可选，另开终端，先 source 同上的 env 且同域）：
+/usr/bin/python3.12 ~/AimSim/a3_teleop_vr/scripts/locomotion_teleop.py --ros-args -p enable:=true
+#    ⚠ enable=true 后轻推摇杆机器人即走（max_scale 0.3）；不走路就不开这步
+
+# 4) 机器人端监视（可选）：
+cd /agibot/data/home/agi/Desktop/teleop_vr_ws/a3_robot_teleop
+nohup bash -c "source /opt/ros/jazzy/setup.bash; export ROS_DOMAIN_ID=232; python3 command_monitor.py" >/tmp/command_monitor.log 2>&1 &
+```
+
+**关闭（按顺序）：**
+
+```bash
+# PC 端
+pkill -INT -f 'real_teleop[.]launch[.]py'        # 主栈（RViz/遥操作/MC 适配器）
+pkill -INT -f 'locomotion_teleop[.]py'           # 摇杆走路（若开着）
+kill -TERM $(pgrep -f RoboticsServiceProcess)    # PC Service
+
+# 机器人端
+cd /agibot/data/home/agi/Desktop/teleop_vr_ws/a3_robot_teleop
+bash stop_domain_bridge.sh                       # 全部管道 + 走路转发
+pkill -f 'command_monitor[.]py'                  # 监视器
+# 如需恢复官方动作播放：~/.local/bin/aimcli em start motion_player
+```
+
 ### 一次性准备（只做一次）
 
 ```bash
@@ -215,7 +258,7 @@ ros2 launch "$PWD"/launch/real_teleop.launch.py
 ros2 launch "$PWD"/launch/real_teleop.launch.py teleop:=true bridge:=true
 ```
 
-模式 ③ 的数据流：Pico 报文经 a3_teleop_bridge 进 a3_streaming_teleop（默认
+模式 ③ 的数据流：Pico 报文经 a3_xrt_bridge（bridge_impl:=xrt 默认）进 a3_streaming_teleop（默认
 backend），发单点 `JointTrajectory` 到 `/<side>_arm_controller/joint_trajectory`；
 a3_mc_controller 对该话题与 FollowJointTrajectory action **双入口**受理，共用
 同一条 100Hz 限位/限速/低通安全链。内置仲裁：流式话题到达即接管该侧并
@@ -254,6 +297,47 @@ RViz 小球 / move_action
 
 机器人端配套工具见同级的 `a3_robot_teleop/`（角度回显 / 指令流监视 / 急停保持）。
 前提：MC 处于 MOTION 状态、motion_player 已关闭（官方要求）。
+
+## 摇杆行走（locomotion_teleop，2026-11-20 新增）
+
+手柄摇杆 -> `/motion/control/locomotion_velocity`（MC 行走接口，仅 MOTION 状态生效）。
+与手臂流式遥操作**互不锁定，可同时使用**（全身遥操作）。
+
+```
+左摇杆：前推/后拉=前进/后退，左右拨=横移（+为左移）
+右摇杆：左右拨=原地旋转（+为左转）
+```
+
+数据链：
+
+```
+/pico_<side>_controller/axis（桥发布，Float32MultiArray [x,y]）
+  -> locomotion_teleop.py（PC，本脚本）
+       死区 0.15 | max_scale 默认 0.3 | 20Hz | 松开补 3 帧零 | 数据超时 0.3s 按零
+  -> /teleop/locomotion_cmd
+  -> 域桥 loco 管道（42->232，start_domain_bridge.sh loco）
+  -> locomotion_relay.py（机器人端，组官方 JSON，50Hz，静默 0.5s 自动发零）
+  -> /motion/control/locomotion_velocity/pb_3A...（RosMsgWrapper，格式同官方 walk.py）
+```
+
+启用（**默认禁用，enable 不显式 true 不发任何指令**；enable 后启动有 8s 全零预热
+用于跨 WiFi 发现链路，机器人不会动）：
+
+```bash
+# 机器人端（首次或重启后）：
+ssh agi@192.168.43.10
+cd /agibot/data/home/agi/Desktop/teleop_vr_ws/a3_robot_teleop
+bash start_domain_bridge.sh loco          # loco 管道 + locomotion_relay
+
+# PC 端（与遥操作同域）：
+source ~/AimSim/a3_teleop_vr/setup_teleop_env.bash
+export ROS_DOMAIN_ID=42
+/usr/bin/python3.12 ~/AimSim/a3_teleop_vr/scripts/locomotion_teleop.py \
+    --ros-args -p enable:=true            # 可加 -p max_scale:=0.5 提速
+```
+
+方向若反了改符号参数即可：`-p lat_sign:=1.0` / `-p ang_sign:=1.0` / `-p fwd_sign:=-1.0`。
+**让机器人真走之前：确认 MC 处于 MOTION 状态、周围安全，并征得操作者同意。**
 
 ## 映射观测与 world_rotation 标定（debug_pub 默认开启）
 
