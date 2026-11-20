@@ -1,0 +1,16 @@
+# === AimSim MC 工作区的大文件与预编译产物（不属于本仓库管理范围）===
+*.tar
+*.whl
+*.zip
+a3_ultra_isaaclab/
+A3_ULTRA_motion_control_x86_humble/
+motion_control_v3.0.19_x86_humble/
+motion_control_x86_v3.0.5_jazzy/
+cfg/
+talker.py
+
+# === 运行产物 ===
+logs/
+__pycache__/
+*.pyc
+*.pkl

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_descriptions</name>
+  <version>0.0.1</version>
+  <description>
+    最小资源包：仅为解析 model_planning.urdf 中的
+    package://robot_descriptions/models/a3_ultra_t2d0/meshes/ 网格路径。
+    meshes 目录是指向 a3_ultra_isaaclab/meshes 的软链接。
+  </description>
+  <maintainer email="demo@example.com">demo</maintainer>
+  <license>BSD</license>
+</package>

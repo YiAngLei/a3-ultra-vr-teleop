@@ -1,0 +1,15 @@
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 智元机器人模型派生文件（由 scripts/setup_robot_model.sh 从本机官方安装生成，
+# 含智元版权内容，禁止提交；新生成的机器上会被 gitignore 兜底）
+src/a3_moveit_config/config/a3_ultra_t2d0.urdf
+src/a3_moveit_config/config/a3_ultra_t2d0.srdf
+src/a3_moveit_config/config/joint_limits.yaml
+src/a3_moveit_config/config/a3_plan_demo_params.yaml
+src/a3_moveit_config/urdf/a3_ultra_t2d0_ros2control.urdf
+
+# 日志
+log/
+*.log
