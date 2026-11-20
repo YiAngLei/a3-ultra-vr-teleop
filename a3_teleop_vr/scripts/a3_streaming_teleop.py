@@ -1,19 +1,27 @@
 #!/usr/bin/env python3.12
-"""Pico VR 手柄 -> A3 双臂流式遥操作（复刻 OpenArm 逻辑，MoveIt 作 IK 引擎）。
+"""Pico VR 手柄 -> A3 双臂流式遥操作（映射逻辑按 XRoboToolkit 双 UR5 官方案例实现，
+MoveIt 作 IK 引擎）。
 
 与 a3_moveit_demo/scripts/arm_teleop.py（触发式）的区别：本节点是连续伺服——
 握住 grip 期间手臂持续跟随手柄，松开即停，不再有"按一次规划一次"的离散感。
 
-映射逻辑与 openarmx_teleop_vr 的相对模式一致：
-  grip > grip_threshold 上升沿：捕获手柄参考位姿 T_hand0 与当前末端 T_ee0
-  增量（手柄体坐标系）：D = T_hand0^-1 · T_hand(t)
-      位置分量过 axis_matrix 重映射并乘 position_scale_xyz
-      姿态分量过 orientation_matrix 共轭重映射
-  目标位姿：T_target = T_ee0 · D（pelvis_link 系，即 RobotState 的 model frame）
+映射逻辑（与 XRoboToolkit-Teleop-Sample-Python 的 base_teleop_controller 一致）：
+  grip > grip_threshold 上升沿：捕获当前末端 T_ee0，以及"世界系手柄位姿"参考 T_w0
+  每周期：原始报文位姿（pico_hmd 系）先过固定转换 R（world_rotation 参数，
+          默认取官方 R_HEADSET_TO_WORLD）：
+              p_w = R·p_raw        姿态共轭 R_w = R·R_raw·Rᵀ（= 官方 q'=Rq⊗q⊗Rq⁻¹）
+          世界系增量：dp = (p_w − p_w0)·position_scale_xyz
+                     DR = R_w·R_w0ᵀ（世界系旋转增量，左复合）
+  目标位姿：T_target = T_ee0 的位置 + dp、朝向 = DR·R_ee0（pelvis_link 系，
+            即 RobotState 的 model frame）
   每周期：MoveIt IK（当前关节作种子）-> 关节空间步进限幅（慢/快两档，带迟滞）
           -> 单点 JointTrajectory 发给 <side>_arm_controller/joint_trajectory
 
-在 OpenArm 之上增加的保护：
+相比旧版（OpenArm 相对模式 D = T_hand0⁻¹·T_hand 过 axis/orientation_matrix）：
+世界系增量不依赖捕获瞬间的手柄朝向，没有"转头耦合进增量""某些构型镜像"的问题；
+axis/orientation_matrix/auto_calib 已全部移除，唯一的标定量是固定转换 R。
+
+在官方逻辑之上增加的保护：
   - 工作空间球限幅（workspace_radius，以捕获点为中心）
   - IK 失败保持上一帧（不发送新目标）
   - pose 流 0.3s 超时自动释放
@@ -29,12 +37,16 @@
 真机模式下 B/Y 脚本动作禁用（真机没有 move_action 可规划）。
 
 映射观测与标定：debug_pub（默认 true）发布 /teleop_debug/<side>/{hand_delta_world,
-cmd_delta_world, target_pose, rot_align_deg, pos_align_deg}——前者是手柄的世界系
-增量（基准），中者是实际施加给手腕的世界系增量（过了映射矩阵），两箭头重合即
-两个矩阵正确；auto_calib:=true 时捕获瞬间按 A = R_ee0^-1·R_hand0 自动标定本臂
-两个映射矩阵。标定测试流程见 README「映射矩阵观测与标定」。
+cmd_delta_world, target_pose, rot_align_deg, pos_align_deg}——前两者是手柄世界系
+旋转增量箭头（未缩放基准 vs 实际施加），target_pose 是 IK 目标位姿（pelvis_link 系，
+RViz 加 Pose/TF 显示可见小坐标架）；rot/pos_align_deg 现在是"指令 vs 实测末端"
+的偏差角（非 0 说明被工作空间限幅卡住或 IK 跟不上，正常时应只在运动时短暂非 0）。
+R 矩阵的手动标定流程见 README「映射观测与标定」。
 
-注意：手柄位姿在 pico_hmd 系下，操作期间转头会耦合进增量（OpenArm 相对模式同样如此）。
+pose_source 参数：默认 relative（/pico_<side>_controller/pose，LEFT/RIGHT 报文）；
+若 Pico 端 App 会发 LEFT_ABS/RIGHT_ABS 报文（bridge 日志出现"首次收到 absolute_hand"
+即说明在发），改用 absolute（/vr/<side>/pose_absolute）可拿到锚定世界原点的位姿，
+彻底消除"转头带动参考系"的耦合（XRoboToolkit 官方数据即世界锚定）。
 """
 import os
 import sys
@@ -169,10 +181,8 @@ class ArmStream:
         self.grip = 0.0
         self.rate = 0.1
         self.streaming = False
-        self.T_hand0 = None
-        self.T_ee0 = None
-        self.axis_matrix = None        # None=用全局；auto_calib/手动标定后为本臂 3x3
-        self.orientation_matrix = None
+        self.T_w0 = None       # 捕获时刻的世界系手柄位姿（pelvis_link 系）
+        self.T_ee0 = None      # 捕获时刻的末端位姿
         self.ik_fail_streak = 0
 
         node.create_subscription(PoseStamped, cfg["pose_topic"], self.on_pose, 20)
@@ -199,7 +209,7 @@ class ArmStream:
         if self.streaming:
             self.logger.info(f"[{self.side}] 释放（{reason}），手臂保持当前位姿")
         self.streaming = False
-        self.T_hand0 = None
+        self.T_w0 = None
         self.T_ee0 = None
 
     def step(self, teleop):
@@ -216,43 +226,42 @@ class ArmStream:
             return None
 
         T_hand = pose_msg_to_T(self.latest_pose)
+        T_w = teleop.to_world(T_hand)   # pico_hmd 系 -> 世界系（固定转换 R）
         if not self.streaming:
-            self.T_hand0 = T_hand.copy()
+            self.T_w0 = T_w.copy()
             self.T_ee0 = teleop.fk(self.ee_link)
             self.streaming = True
             self.ik_fail_streak = 0
             self.logger.info(
-                f"[{self.side}] 已使能：手柄参考与 {self.ee_link} 当前位姿绑定，移动手柄即可跟随"
+                f"[{self.side}] 已使能：世界系手柄参考与 {self.ee_link} 当前位姿绑定，"
+                "移动手柄即可跟随"
             )
-            if teleop.auto_calib:
-                # 在默认映射（轴置换）之上补捕获瞬间的手腕-手柄朝向差：
-                # A = (R_ee0⁻¹·R_hand0) · base，base 先还原数据分量到物理轴。
-                A = (self.T_ee0[:3, :3].T @ self.T_hand0[:3, :3]
-                     @ (self.axis_matrix if self.axis_matrix is not None
-                        else teleop.axis_matrix))
-                self.axis_matrix = A.copy()
-                self.orientation_matrix = A.copy()
-                self.logger.info(f"[{self.side}] auto_calib 已写入本臂映射矩阵：\n{A.round(3)}")
             return None
 
-        # --- OpenArm 相对模式映射 ---
-        D = np.linalg.inv(self.T_hand0) @ T_hand
-        A = self.axis_matrix if self.axis_matrix is not None else teleop.axis_matrix
-        M = self.orientation_matrix if self.orientation_matrix is not None else teleop.orientation_matrix
-        p_delta = A @ D[:3, 3] * teleop.position_scale
-        R_delta = M @ D[:3, :3] @ M.T
+        # --- XRoboToolkit 世界系增量映射 ---
+        # 位置：世界系位移差（等价官方 delta_xyz = (p−p0)·scale_factor）
+        dp_raw = T_w[:3, 3] - self.T_w0[:3, 3]
+        dp = dp_raw * teleop.position_scale
+        # 旋转：世界系左复合增量（等价官方 quat_diff_as_angle_axis + apply_delta_pose
+        # 的 target_rot = ΔR ⊗ ref_quat）
+        DR = T_w[:3, :3] @ self.T_w0[:3, :3].T
         T_target = self.T_ee0.copy()
-        T_target[:3, :3] = self.T_ee0[:3, :3] @ R_delta
-        T_target[:3, 3] = self.T_ee0[:3, 3] + self.T_ee0[:3, :3] @ p_delta
+        T_target[:3, :3] = DR @ self.T_ee0[:3, :3]
+        T_target[:3, 3] = self.T_ee0[:3, 3] + dp
 
         # 工作空间球限幅（OpenArm 没有，这里防 IK 追飞）
-        offset = T_target[:3, 3] - self.T_ee0[:3, 3]
+        offset = dp
         dist = float(np.linalg.norm(offset))
         if dist > teleop.workspace_radius:
-            T_target[:3, 3] = self.T_ee0[:3, 3] + offset * (teleop.workspace_radius / dist)
+            scale = teleop.workspace_radius / dist
+            T_target[:3, 3] = self.T_ee0[:3, 3] + offset * scale
+            dp = offset * scale
 
         # --- IK（当前状态作种子，小步进局部收敛） ---
-        teleop.publish_debug(self, D, p_delta, R_delta, T_target)
+        T_ee_now = teleop.fk(self.ee_link)
+        DR_ee = T_ee_now[:3, :3] @ self.T_ee0[:3, :3].T
+        dp_ee = T_ee_now[:3, 3] - self.T_ee0[:3, 3]
+        teleop.publish_debug(self, DR, dp_raw, dp, T_target, DR_ee, dp_ee)
         state = teleop.build_state()
         t0 = time.monotonic()
         ok = state.set_from_ik(self.group, T_to_pose_msg(T_target), self.ee_link, teleop.ik_timeout)
@@ -296,9 +305,12 @@ class StreamingTeleop(Node):
         self.declare_parameter("stream_timeout", 0.3)
         self.declare_parameter("ik_timeout", 0.01)
         self.declare_parameter("workspace_radius", 0.5)
-        self.declare_parameter("position_scale_xyz", [1.0, 1.0, 0.9])
+        self.declare_parameter("position_scale_xyz", [1.0, 1.0, 1.0])
         self.declare_parameter("debug_pub", True)     # /teleop_debug/* 映射观测话题
-        self.declare_parameter("auto_calib", False)   # 捕获时按 R_ee0^-1·R_hand0 自动标定本臂矩阵
+        self.declare_parameter("world_rotation", [0.0, 0.0, -1.0,
+                                                    -1.0, 0.0, 0.0,
+                                                    0.0, 1.0, 0.0])  # 行主序 3x3
+        self.declare_parameter("pose_source", "relative")  # relative=/pico_* | absolute=/vr/*
         self.declare_parameter("slow_step_deg", SLOW_STEP_DEG)
         self.declare_parameter("fast_step_deg", FAST_STEP_DEG)
         # 输出后端：sim_jtc = ros2_control 仿真（默认）；mc_arm = 智元 MC 真机接口
@@ -314,17 +326,12 @@ class StreamingTeleop(Node):
         self.ik_timeout = float(p("ik_timeout").value)
         self.workspace_radius = float(p("workspace_radius").value)
         self.position_scale = np.asarray(p("position_scale_xyz").value, dtype=np.float64)
-        # 轴置换（实测标定）：Pico 数据的体轴相对手柄物理轴循环错位——
-        # 物理 x 运动显示在数据 z、物理 y→数据 x、物理 z→数据 y。
-        # 用置换矩阵 Pᵀ 把数据分量换回物理顺序再进原有映射：
-        #   Pᵀ @ [x,y,z]_数据 = [z,x,y]_数据 = [x,y,z]_物理
-        # （绕 (1,1,1) 转 120° 的合法旋转，行列式 +1）
-        self.axis_matrix = np.array([[0.0, 0.0, 1.0],
-                                     [1.0, 0.0, 0.0],
-                                     [0.0, 1.0, 0.0]])
-        self.orientation_matrix = self.axis_matrix.copy()
+        # pico_hmd 系 -> 世界系的固定转换（XRoboToolkit 官方案例 R_HEADSET_TO_WORLD 同款，
+        # 默认值即官方矩阵）。若实测方向不对，按 README「映射观测与标定」重测此阵。
+        self.world_rotation = np.asarray(p("world_rotation").value,
+                                         dtype=np.float64).reshape(3, 3)
+        self.pose_source = str(p("pose_source").value).lower()
         self.debug_pub = bool(p("debug_pub").value)
-        self.auto_calib = bool(p("auto_calib").value)
         self.slow_step_rad = np.asarray(p("slow_step_deg").value, dtype=np.float64)
         self.fast_step_rad = np.asarray(p("fast_step_deg").value, dtype=np.float64)
         # 迟滞阈值 = 快速档步进（OpenArm 同款：小误差不限幅）
@@ -364,7 +371,12 @@ class StreamingTeleop(Node):
             self.mc_cmd_pub = None
 
         # --- 双臂与按键 ---
-        self.arms = {side: ArmStream(self, side, cfg) for side, cfg in ARMS.items()}
+        def _arm_cfg(side):
+            cfg = dict(ARMS[side])
+            if self.pose_source == "absolute":
+                cfg["pose_topic"] = f"/vr/{side}/pose_absolute"
+            return cfg
+        self.arms = {side: ArmStream(self, side, _arm_cfg(side)) for side in ARMS}
         # IK 目标坐标架 TF：等价 XRoboToolkit 双 UR5 官方案例的 mocap 小坐标系，
         # RViz 加 TF/Pose 显示即可看到"手柄化身"（pelvis_link 旁的跟随坐标架）
         self._tf_broadcaster = TransformBroadcaster(self)
@@ -435,17 +447,32 @@ class StreamingTeleop(Node):
     def fk(self, ee_link):
         return self.build_state().get_global_link_transform(ee_link)
 
+    def to_world(self, T_raw):
+        """手柄报文位姿（pico_hmd 系）-> 世界系齐次矩阵（pelvis_link 系）。
+
+        与 XRoboToolkit 双 UR5 官方案例 base_teleop_controller._process_xr_pose 同款：
+        位置左乘固定转换 R；姿态做旋转共轭 R_w = R·R_raw·Rᵀ（等价官方的四元数
+        共轭 q' = Rq⊗q⊗Rq⁻¹）。在捕获与每周期增量之前调用，保证所有增量都在
+        世界系里计算——不依赖捕获瞬间的手柄朝向。
+        """
+        R = self.world_rotation
+        T_w = np.eye(4)
+        T_w[:3, :3] = R @ T_raw[:3, :3] @ R.T
+        T_w[:3, 3] = R @ T_raw[:3, 3]
+        return T_w
+
     def current_group_positions(self, group):
         return [self.joint_states.get(n, 0.0) for n in self.group_joints[group]]
 
-    # ---------- 映射观测（/teleop_debug/*，配合 RViz Pose 显示标定两个矩阵） ----------
-    def publish_debug(self, arm, D, p_delta, R_delta, T_target):
-        """每周期发布手柄增量 vs 实际施加增量的世界系对比，以及 IK 目标位姿。
+    # ---------- 映射观测（/teleop_debug/*，RViz Pose 显示 + 阈值监视器） ----------
+    def publish_debug(self, arm, DR, dp_raw, dp, T_target, DR_ee, dp_ee):
+        """每周期发布手柄世界系增量箭头、IK 目标位姿/TF，以及"指令 vs 实测"偏差角。
 
-        hand 箭头 = 手柄自捕获以来的世界系增量（未过映射矩阵，基准）
-        cmd  箭头 = 实际施加给手腕的世界系增量（过了 axis/orientation_matrix）
-        两箭头重合 <=> 两个矩阵正确；rot/pos_align_deg 是数值化夹角（仅运动时有效）。
-        D 本身在手柄体系里、pico_hmd 不在 TF 中，无法直接画，故发布其世界等价形式。
+        hand 箭头 = 手柄自捕获以来的世界系旋转增量（基准，未缩放不影响旋转）
+        cmd  箭头 = 实际施加给末端的世界系旋转增量（正常情况下两者完全相同；
+                    箭头差异即 world_rotation 标定有误的可视化）
+        rot/pos_align_deg = 指令旋转/平移增量 与 实测末端增量 的夹角（度）：
+                    正常工作时应 ≈0；持续非 0 说明被工作空间限幅卡住或 IK 跟不上。
         """
         # IK 目标坐标架：同步发 TF（独立于 debug_pub，默认可见）。松 grip 后本函数
         # 不再被调用，TF 保持最后姿态——与 UR5 官方案例 mocap"松开定住"语义一致。
@@ -463,25 +490,18 @@ class StreamingTeleop(Node):
         d = self.dbg.get(arm.side)
         if d is None:
             return
-        R_h0 = arm.T_hand0[:3, :3]
-        R_e0 = arm.T_ee0[:3, :3]
         now = self.get_clock().now().to_msg()
-        # 与 p_delta 同缩放，只比方向（position_scale 不改方向）
-        p_h = R_h0 @ D[:3, 3] * self.position_scale
-        R_h = R_h0 @ D[:3, :3] @ R_h0.T
-        p_c = R_e0 @ p_delta
-        R_c = R_e0 @ R_delta @ R_e0.T
 
         hand = PoseStamped()
         hand.header.stamp = now
         hand.header.frame_id = self.model_frame
         # 固定在机器人头侧两处，保证任何姿态下都看得见（y+ 左 / y- 右）
-        hand.pose = T_to_pose_msg(rot_pos_T(R_h, (0.0, 0.55, 1.1)))
+        hand.pose = T_to_pose_msg(rot_pos_T(DR, (0.0, 0.55, 1.1)))
         d["hand"].publish(hand)
         cmd = PoseStamped()
         cmd.header.stamp = now
         cmd.header.frame_id = self.model_frame
-        cmd.pose = T_to_pose_msg(rot_pos_T(R_c, (0.0, -0.55, 1.1)))
+        cmd.pose = T_to_pose_msg(rot_pos_T(DR, (0.0, -0.55, 1.1)))
         d["cmd"].publish(cmd)
         target = PoseStamped()
         target.header.stamp = now
@@ -489,14 +509,14 @@ class StreamingTeleop(Node):
         target.pose = T_to_pose_msg(T_target)
         d["target"].publish(target)
 
-        # 旋转一致性：R_c 相对 R_h 的偏差角（度）
-        cosang = (np.trace(R_c @ R_h.T) - 1.0) / 2.0
+        # 旋转偏差：指令 DR 相对 实测末端旋转增量 的夹角（度）
+        cosang = (np.trace(DR @ DR_ee.T) - 1.0) / 2.0
         d["rot_align"].publish(Float32(data=float(
             np.degrees(np.arccos(min(1.0, max(-1.0, cosang)))))))
-        # 平移方向一致性（度）；手柄几乎不动时不发布，避免误导
-        nh, nc = np.linalg.norm(p_h), np.linalg.norm(p_c)
+        # 平移方向偏差（度）；手柄几乎不动时不发布，避免误导
+        nh, nc = np.linalg.norm(dp), np.linalg.norm(dp_ee)
         if nh > 1e-4 and nc > 1e-4:
-            cosv = float(np.dot(p_h, p_c) / (nh * nc))
+            cosv = float(np.dot(dp, dp_ee) / (nh * nc))
             d["pos_align"].publish(Float32(data=float(
                 np.degrees(np.arccos(min(1.0, max(-1.0, cosv)))))))
 

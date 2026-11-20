@@ -56,19 +56,29 @@ ros2 launch "$PWD"/launch/teleop_vr.launch.py bridge:=true
 | 脚本动作中握 grip | 取消脚本动作，回到手动（与 OpenArm 相同语义） |
 | 扳机 | 未接线（本模型 31 关节无夹爪） |
 
-映射公式（与 OpenArm 相对模式一致）：
+映射公式（按 XRoboToolkit 双 UR5 官方案例，世界系增量；旧 OpenArm 相对模式见 git 历史）：
 
 ```
-按下瞬间：  T_hand0 = 手柄位姿(pico_hmd 系)   T_ee0 = FK(当前关节) (pelvis 系)
-每周期：    D = T_hand0^-1 · T_hand(t)                # 手柄体坐标系增量
-           p' = axis_matrix · p_D · position_scale    # 默认轴置换/[1,1,0.9]
-           R' = ori_matrix · R_D · ori_matrix^T
-           T_target = T_ee0 · [R', p']                # 右复合，pelvis 系
-           位置限幅：|T_target - T_ee0| ≤ workspace_radius(0.5m)
+固定转换：   R = world_rotation（pico_hmd 系 -> pelvis 系，默认官方 R_HEADSET_TO_WORLD）
+             T_w(t) = [R·R_raw·Rᵀ, R·p_raw]        # 姿态共轭，等价官方 q'=Rq⊗q⊗Rq⁻¹
+按下瞬间：   T_w0 = T_w(按下帧)   T_ee0 = FK(当前关节) (pelvis 系)
+每周期：    dp_raw = p_w(t) − p_w0                  # 世界系位置增量
+           dp = dp_raw · position_scale             # [1,1,1]，逐轴
+           DR  = R_w(t) · R_w0ᵀ                    # 世界系旋转增量（左复合）
+           T_target = [DR·R_ee0, p_ee0 + dp]       # pelvis 系
+           位置限幅：|dp| > workspace_radius(0.5m) 时等比缩到球面
 IK：        RobotState(当前 /joint_states 播种) → set_from_ik(group, T_target, ee, 10ms)
 限幅：      |q_target - q_now| > 阈值 才按慢/快档 max_step 截断（OpenArm 迟滞设计）
 输出：      单点 JointTrajectory → <side>_arm_controller/joint_trajectory @ control_rate
 ```
+
+世界系增量的好处：不依赖捕获瞬间的手柄朝向（旧版 D 在手柄体系，转头/换手会耦合），
+也没有"某些构型左右镜像"的问题。`axis/orientation_matrix` 与 `auto_calib` 已移除，
+唯一标定量是固定转换 R（见「映射观测与标定」）。
+
+若 Pico 端 App 会发 `LEFT_ABS/RIGHT_ABS` 报文（bridge 日志出现"首次收到 absolute_hand"
+即在发），用 `-p pose_source:=absolute` 切换到位姿锚定世界原点的绝对流，可彻底消除
+"转头带动参考系"的耦合（XRoboToolkit 官方数据即世界锚定）。
 
 ## 调参（-p 覆盖，均有默认值）
 
@@ -79,7 +89,7 @@ IK：        RobotState(当前 /joint_states 播种) → set_from_ik(group, T_ta
 | stream_timeout | 0.3 | pose 流超时（秒）后自动释放 |
 | ik_timeout | 0.01 | 单次 IK 超时（秒） |
 | workspace_radius | 0.5 | 工作空间球半径（米） |
-| position_scale_xyz | [1.0, 1.0, 0.9] | 位置增量缩放 |
+| position_scale_xyz | [1.0, 1.0, 1.0] | 位置增量缩放（逐轴） |
 | slow_step_deg | 全 4.0 | 慢速档每关节每周期最大步进 |
 | fast_step_deg | [20,16,12,12,14,8,12] | 快速档每关节每周期最大步进 |
 | output_backend | sim_jtc | sim_jtc=仿真 JTC；**mc_arm=真机 MC 官方接口** |
@@ -88,7 +98,8 @@ IK：        RobotState(当前 /joint_states 播种) → set_from_ik(group, T_ta
 | mc_max_speed | 4.0 | 相邻指令速度限幅 rad/s（官方 ≤4） |
 | mc_lowpass_alpha | 0.5 | 指令低通系数（官方建议） |
 | debug_pub | true | 发布 /teleop_debug/* 映射观测话题（标定用，见下节） |
-| auto_calib | false | 捕获瞬间按 A=R_ee0⁻¹·R_hand0 自动标定本臂两个映射矩阵 |
+| world_rotation | [0,0,-1,-1,0,0,0,1,0] | pico_hmd 系→世界系固定转换（行主序；官方 R_HEADSET_TO_WORLD） |
+| pose_source | relative | relative=/pico_*_controller/pose；absolute=/vr/*_pose_absolute（需 APK 发 ABS 报文） |
 
 例：`--ros-args -p workspace_radius:=0.3 -p control_rate:=30.0`
 
@@ -173,61 +184,57 @@ RViz 小球 / move_action
 机器人端配套工具见同级的 `a3_robot_teleop/`（角度回显 / 指令流监视 / 急停保持）。
 前提：MC 处于 MOTION 状态、motion_player 已关闭（官方要求）。
 
-## 映射矩阵观测与标定（debug_pub 默认开启）
+## 映射观测与 world_rotation 标定（debug_pub 默认开启）
 
-手柄增量 D 在手柄体系里、pico_hmd 不在 TF 中，无法直接画进 RViz，所以发布的是
-它的**世界等价形式**：每臂两根箭头 + IK 目标 + 两个数值夹角（话题
+映射全部在世界系进行，RViz（Fixed Frame=pelvis_link，launch 默认配置已带显示）
+里每臂可见：**小坐标架 teleop/<side>_target**（IK 目标，等价 XRoboToolkit 双 UR5
+官方案例的 mocap 体）+ 头侧两根旋转箭头 + 两个数值夹角（话题
 `/teleop_debug/<side>/*`，frame 均为 model_frame=pelvis_link）：
 
 | 话题 | 类型 | 含义 |
 |---|---|---|
-| hand_delta_world | PoseStamped | 手柄自捕获以来的世界系增量（未过映射矩阵，基准；固定在 y=+0.55,z=1.1） |
-| cmd_delta_world | PoseStamped | 实际施加给手腕的世界系增量（过了 axis/orientation_matrix；固定在 y=-0.55,z=1.1） |
-| target_pose | PoseStamped | 发给 IK 的目标位姿 T_target（在手腕真实位置） |
-| rot_align_deg | Float32 | 两增量的旋转偏差角（度）；≈0 即 orientation_matrix 正确 |
-| pos_align_deg | Float32 | 两增量平移方向的偏差角（度）；≈0 即 axis_matrix 正确 |
+| target_pose / TF teleop/<side>_target | PoseStamped/TF | 发给 IK 的目标位姿（在手腕应去的位置） |
+| hand_delta_world | PoseStamped | 手柄自捕获以来的世界系旋转增量（基准；固定在 y=+0.55,z=1.1） |
+| cmd_delta_world | PoseStamped | 实际施加的世界系旋转增量（正常应与 hand 完全一致；固定在 y=-0.55,z=1.1） |
+| rot_align_deg | Float32 | 指令旋转增量 vs 实测末端增量的偏差角（度）；正常 ≈0 |
+| pos_align_deg | Float32 | 指令平移 vs 实测末端位移方向的偏差角（度）；正常 ≈0 |
 
-**RViz 设置**：Fixed Frame 选 pelvis_link → Add → Pose ×3（上面前三个话题，
-Axes Length 给 0.15 以上；hand 设绿色、cmd 设红色方便区分）。
 **配一个阈值报数监视器**（平时无输出=正常，超阈值才打印，解决 echo 刷屏没法
 对照动作的问题）：
 
 ```bash
 /usr/bin/python3.12 scripts/debug_mapping_monitor.py          # 双臂，阈值 10°
-# 打印形如 "[left] 旋转方向偏差 173.2°"，判读见脚本头注释
+# 打印形如 "[left] 旋转方向偏差 12.3°"，判读见脚本头注释
 ```
 
-**测 axis_matrix（平移）**：握 grip 后只平移手柄——前/后/左/右/上/下各来几次。
-运动中看 pos_align_deg（`ros2 topic echo /teleop_debug/left/pos_align_deg`）：
-- 全程 ≈0：axis_matrix 正确；
-- 朝某个方向动时跳到 ≈180°：该轴符号反了（axis_matrix 对应行取反）。
+**world_rotation 标定（唯一需要标定的量）**：
 
-**测 orientation_matrix（转动）**：握 grip 后只旋转手柄——左右拧（yaw）、
-俯仰（pitch）、横滚（roll）各来几次，看 rot_align_deg：
-- 全程 ≈0：orientation_matrix 正确；
-- 某种转法时 ≈180°：该轴旋转方向全反（正是"我往左他往右"式症状）；
-- 出现 ≈90°/270° 或乱变：轴向对错（矩阵应为带符号的轴置换阵）。
+1. 开 RViz（launch 默认带 Pose/TF 显示），握 grip，让 RViz 小坐标架跟随；
+2. **平移判定**：手柄沿 RViz 世界系 +x 方向移动——小坐标架应同向移动：
+   - 方向正确 → x 行标定完毕；反向 → x 行取反；
+   - 走的不是 x 而是别的轴 → 记录"手柄物理 +x 对应世界哪根轴"；
+   对 +y、+z 重复，得到三张"物理轴 → 世界轴"映射（含符号）；
+3. **旋转判定**：握 grip 后绕某世界轴拧手柄 45°，末端应绕同轴转 45°（不是 2 倍、
+   不是反方向）；
+4. 把三张映射拼成带符号的轴置换矩阵（3×3 每行每列恰好一个 ±1），以行主序 9 个数
+   传给 `-p world_rotation:="[r11,r12,r13,r21,r22,r23,r31,r32,r33]"`。
 
-注意：两个夹角只在**运动过程中**有效；手柄不动时旋转天然对齐、平移不发布，
-读数没有意义。
+   快捷测定法：用 `scripts/pico_motion_viewer.py` 的"头显系Δ"列——手柄沿 RViz
+   +x 移动时它在报文系里的位移 v，要求 R·v = +x，三次移动定出 R 的三列。
+5. 默认值即 XRoboToolkit 官方 UR5 案例的 R_HEADSET_TO_WORLD（报文系≈Unity 惯用
+   约定时可直接用）；OpenArmX 报文系若不同才需要重测。
 
-**修法**（测完确认问题后）：
-0. **默认已带本机标定**：实测 Pico 数据体轴相对手柄物理轴循环错位（物理 x→
-   数据 z、y→x、z→y），脚本默认矩阵已配成该置换的逆（Pᵀ，值仍全为 0/1）。
-   若你的 Pico/bridge 版本读数一致，无需任何标定。
-1. **auto_calib**：启动加 `auto_calib:=true`（launch 参数，
-   `ros2 launch ... teleop_vr.launch.py auto_calib:=true`，联动模式同理），
-   捕获瞬间自动算 A=R_ee0⁻¹·R_hand0 写入本臂两个矩阵（左右臂各自独立标定），
-   在默认置换基础上再补手腕-手柄朝向差。判据：开后两根箭头全程重合、两个
-   夹角 ≈0、监视器静默。代价：手柄绕自身长轴滚转会带动映射系，属预期行为。
-2. **手动常量**：直接改脚本里 `self.axis_matrix` / `self.orientation_matrix`
-   （a3_streaming_teleop.py 中"轴置换（实测标定）"处），按上面判据试带符号的
-   轴置换阵（24 种旋转 + 反射）。仅当 auto_calib 的手感不可接受时用。
+**"指令 vs 实测"夹角（rot/pos_align_deg）不再是矩阵标定判据**——它们现在监视
+"目标是否被工作空间限幅卡住 / IK 是否跟不上"：手柄大幅移动时若持续非 0，
+先看 target_pose 小坐标架是否顶在 workspace_radius 球面上。
 
 ## 已知限制
 
-- **头部耦合**：手柄位姿在 pico_hmd 系，操作期间转头会等效移动手柄
-  （OpenArm 相对模式同样如此）。操作时面向机器人、头部少动。
+- **头部耦合**：手柄位姿在 pico_hmd 系，操作期间转头会等效移动手柄。缓解：
+  操作时面向机器人、头部少动；**根治**：Pico 端 App 支持的话改发
+  `LEFT_ABS/RIGHT_ABS` 报文，并 `-p pose_source:=absolute`（bridge 日志出现
+  "首次收到 absolute_hand" 即说明在发；XRoboToolkit 官方链路数据即世界锚定，
+  无此问题）。
 - **无碰撞检测**：沿用了 OpenArm 的思路（限位 + 步进限幅 + 工作空间球），
   IK 本身不查碰撞；需要碰撞安全就走 moveit_servo 方案或触发式规划。
 - **脚本动作是关节空间目标**（全零 / 举手构型），靠 OMPL 规划保证无碰撞；

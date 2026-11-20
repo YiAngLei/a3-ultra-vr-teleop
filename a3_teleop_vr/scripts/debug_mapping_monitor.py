@@ -8,12 +8,13 @@
   /usr/bin/python3.12 scripts/debug_mapping_monitor.py                # 双臂，阈值 10°
   /usr/bin/python3.12 scripts/debug_mapping_monitor.py --side right --threshold 5
 
-判读（对应 README「映射矩阵观测与标定」）：
-  - 平移某方向时出现 ≈180°：axis_matrix 该轴符号反；
-  - 持续同向拧手柄，旋转偏差跟着涨到 ≈2 倍（拧 45° 报 ~90°、拧 88° 报 ~176°）：
-    orientation_matrix 该轴旋转方向全反（偏差角=两倍实际转角，不是 bug）；
-  - 旋转偏差稳定 ≈90°/270° 或乱跳：轴向对错（矩阵应为带符号的轴置换阵）；
-  - 手柄不动时的底噪只有几度，不报数属正常。
+判读（XRoboToolkit 世界系映射版，rot/pos_align_deg = 指令增量 vs 实测末端增量的夹角）：
+  - 正常跟随时应无输出（偏差 ≈0）；
+  - 手柄大幅移动时持续报数：被 workspace_radius 限幅卡住或 IK 追不上
+    （看 /teleop_debug/<side>/target_pose 是否停在球面上）；
+  - 静止时也偶发小角度：末端轻微回弹 / 步进限幅迟滞，底噪几度正常；
+  - 映射方向类问题（世界系增量 + 固定 R 矩阵）现在表现为"手柄往左、
+    RViz 目标架往别的方向"，直接看 RViz 小坐标架即可，不看本监视器。
 """
 import argparse
 import time

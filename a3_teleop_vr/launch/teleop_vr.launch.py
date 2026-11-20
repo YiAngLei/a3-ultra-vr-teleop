@@ -24,8 +24,12 @@ a3_teleop_bridge（UDP 接收 Pico 报文）。
           直接对机器人 MC 的 /motion/control/arm_joint_command 发指令，
           状态从 /motion/control/arm_joint_state 读。前提：机器人 MC 已运行且处于
           MOTION 状态、motion_player 已关闭（见 a3_robot_teleop/README.md）。
-  auto_calib true/false（默认 false）：捕获瞬间按 A=R_ee0⁻¹·R_hand0 自动标定本臂
-          axis/orientation_matrix（世界一致映射）。映射方向不对（镜像/反向）时开。
+  映射按 XRoboToolkit 双 UR5 官方案例（世界系增量）：
+          - world_rotation：pico_hmd 系->世界系固定转换（行主序 9 个数，默认即
+            官方 R_HEADSET_TO_WORLD），方向不对时按 README 标定流程重测；
+          - pose_source：relative（默认，/pico_*_controller/pose）或 absolute
+            （/vr/<side>/pose_absolute，需 Pico 端发 LEFT_ABS/RIGHT_ABS 报文，
+            可消除"转头带动参考系"的耦合）。
 
 a3_moveit_demo 的定位：默认取本仓库（a3_teleop_vr 的上级目录）下的 a3_moveit_demo，
 也可用环境变量 A3_MOVEIT_DEMO_DIR 指向其他位置。real:=true 时仅使用其参数文件
@@ -59,7 +63,6 @@ def generate_launch_description():
     real = LaunchConfiguration("real")
     real_cond = IfCondition(real)
     not_real = UnlessCondition(real)
-    calib_pair = ["auto_calib:=", LaunchConfiguration("auto_calib")]
     teleop_args = [
         str(PKG / "scripts" / "a3_streaming_teleop.py"),
         "--ros-args",
@@ -71,7 +74,6 @@ def generate_launch_description():
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("bridge", default_value="false"),
             DeclareLaunchArgument("real", default_value="false"),
-            DeclareLaunchArgument("auto_calib", default_value="false"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(A3_DEMO_LAUNCH)),
                 launch_arguments={
@@ -94,14 +96,13 @@ def generate_launch_description():
                 arguments=teleop_args + [
                     "-p", "output_backend:=mc_arm",
                     "-p", "control_rate:=100.0",
-                    "-p", calib_pair,
                 ],
                 condition=real_cond,
                 output="screen",
             ),
             Node(
                 executable="/usr/bin/python3.12",
-                arguments=teleop_args + ["-p", calib_pair],
+                arguments=teleop_args,
                 condition=not_real,
                 output="screen",
             ),
