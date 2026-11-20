@@ -149,3 +149,16 @@ aimsim isaac start     # Isaac Sim 仿真（需另装 Isaac Sim 4.2 并设置 US
 - 三个发布包内容高度同构但不同步：robot_map、机型配置目录、bin 内库集合均有差异（如 `libhpp-fcl.so` 只在 v3.0.19 包中）。做任何跨包修改前先 `diff` 确认。
 - 项目注释、文档、日志均使用中文，新增注释请保持中文。
 - 工具脚本里 `S_`/`T_` 前缀约定：**S = Service（RPC 查询/设置），T = Topic（发布命令）**。
+
+## 8. 版本管理（2026-11-20 建立）
+
+本工作区已纳入 git 管理（仓库根即本目录）。`.gitignore` 排除了 MC 发布包、wheel、
+`a3_ultra_isaaclab/` 模型等大文件；跟踪范围是 `a3_teleop_vr/`、`a3_moveit_demo/`、
+`a3_robot_teleop/` 三个自研目录及本文档。
+
+- 基线备份：`main` 分支 + 标签 `backup/pre-xrobot-refactor`
+  （XRoboToolkit 世界系映射重构前的 OpenArm 相对模式版本）
+- 后续开发在 `xrobot-refactor` 分支进行；回退：`git checkout main` 或
+  `git reset --hard backup/pre-xrobot-refactor`
+- 启动/验证方式见 `a3_teleop_vr/README.md`（仿真回归用 `scripts/fake_pico_publisher.py`，
+  无需头显/眼镜）
