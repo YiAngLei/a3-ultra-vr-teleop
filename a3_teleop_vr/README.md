@@ -57,6 +57,63 @@ ros2 launch "$PWD"/launch/teleop_vr.launch.py bridge:=true   # bridge_impl 默�
 无头显回归测试：`scripts/fake_pico_publisher.py` 直接发布 /pico_* 话题（与桥输出
 同名），bridge:=false 启动栈后运行即可，无需任何 VR 设备。
 
+## 命令速查（2026-11-20 全部实测验证）
+
+### 一次性准备（只做一次）
+
+```bash
+# 模型派生文件（需智元官方模型目录，如 AimSim 工作区自带）
+export A3_MODEL_SRC=$HOME/AimSim/a3_ultra_isaaclab
+bash ~/AimSim/a3_moveit_demo/scripts/setup_robot_model.sh
+
+# xrt 桥依赖：xrobotoolkit-sdk 装进系统 python3.12（cp310-abi3，已装可跳过）
+/usr/bin/python3.12 -m pip install --user --break-system-packages \
+    --proxy http://127.0.0.1:7897 xrobotoolkit-sdk
+```
+
+### 每次使用（按顺序）
+
+```bash
+# 1) PC Service（常驻，必须先起；脚本会自行后台化）
+bash /opt/apps/roboticsservice/runService.sh
+
+# 2) 头显：XRoboToolkit App → PC Service IP 填本机 IP（hostname -I 的第一个）
+#    → 勾 Head + Controller → Send 拨 ON
+
+# 3) 仿真栈 + 桥接 + RViz（一条命令）
+source ~/AimSim/a3_teleop_vr/setup_teleop_env.bash
+export ROS_DOMAIN_ID=76               # 所有相关终端必须同域
+ros2 launch "$HOME"/AimSim/a3_teleop_vr/launch/teleop_vr.launch.py bridge:=true
+```
+
+### 启动变体
+
+```bash
+ros2 launch .../teleop_vr.launch.py bridge:=true pos_scale:=0.5      # 降位置灵敏度
+ros2 launch .../teleop_vr.launch.py bridge:=true rviz:=false         # 无 RViz
+ros2 launch .../teleop_vr.launch.py real:=true bridge:=true          # 真机（前提见「真机模式」）
+ros2 launch .../teleop_vr.launch.py bridge:=true bridge_impl:=openarmx  # 旧 OpenArmX 桥（对照/回退）
+```
+
+### 调试命令（终端都要先 source setup_teleop_env.bash 且同 ROS_DOMAIN_ID）
+
+```bash
+ros2 topic hz /pico_left_controller/pose                  # 数据流频率（应 ~100Hz）
+ros2 topic echo /pico_right_controller/grip               # 握把值（>0.5 激活该臂）
+ros2 run tf2_ros tf2_echo pelvis_link teleop/left_target  # 目标坐标架实时位姿
+ros2 run tf2_ros tf2_echo xrt xrt_left_controller         # 手柄原始坐标架（报文系）
+/usr/bin/python3.12 scripts/pico_motion_viewer.py         # 报文系位移三列读数（标定 R 用）
+/usr/bin/python3.12 scripts/debug_mapping_monitor.py      # 指令 vs 实测偏差（静默=健康）
+ros2 topic echo /teleop_debug/left/pos_align_deg          # 平移偏差角数值
+```
+
+### 无头显回归
+
+```bash
+ros2 launch .../teleop_vr.launch.py bridge:=false     # 栈起来后另开终端：
+/usr/bin/python3.12 scripts/fake_pico_publisher.py    # 40s 自动剧本，结尾打印 PASS×2
+```
+
 ## 操作
 
 | 输入 | 作用 |
@@ -103,7 +160,7 @@ IK：        RobotState(当前 /joint_states 播种) → set_from_ik(group, T_ta
 | stream_timeout | 0.3 | pose 流超时（秒）后自动释放 |
 | ik_timeout | 0.01 | 单次 IK 超时（秒） |
 | workspace_radius | 0.5 | 工作空间球半径（米） |
-| position_scale_xyz | [1.0, 1.0, 1.0] | 位置增量缩放（逐轴） |
+| position_scale_xyz | [1.0, 1.0, 1.0] | 位置增量缩放（逐轴）；launch 快捷参数 `pos_scale`（标量，如 `pos_scale:=0.5`） |
 | slow_step_deg | 全 4.0 | 慢速档每关节每周期最大步进 |
 | fast_step_deg | [20,16,12,12,14,8,12] | 快速档每关节每周期最大步进 |
 | output_backend | sim_jtc | sim_jtc=仿真 JTC；**mc_arm=真机 MC 官方接口** |

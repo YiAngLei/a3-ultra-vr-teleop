@@ -23,6 +23,10 @@
                     回退；两者端口/话题不冲突但不要同时开）。
           rate 调速档：xrt 桥默认用扳机当快进键（trigger>0.5=快档），
                     -p rate_from_trigger:=false 固定慢档。
+  pos_scale 位置放大系数（默认 1.0，标量）：如 pos_scale:=0.5 表示手移 10cm
+          末端走 5cm（嫌太灵敏就调小，0.5~0.7 常用）。展开的逐轴形式为
+          position_scale_xyz:=[v,v,v]；旋转增量无缩放（与官方一致）。
+          注意：参数在节点启动时读取一次，改后需重启栈生效。
   real    true/false（默认 false）：真机模式。不拉起仿真栈（move_group/ros2_control/
           RViz 都不需要），teleop 节点以 output_backend:=mc_arm + 100Hz 启动，
           直接对机器人 MC 的 /motion/control/arm_joint_command 发指令，
@@ -64,6 +68,7 @@ def generate_launch_description():
     rviz = LaunchConfiguration("rviz")
     bridge = LaunchConfiguration("bridge")
     bridge_impl = LaunchConfiguration("bridge_impl")
+    pos_scale = LaunchConfiguration("pos_scale")
     real = LaunchConfiguration("real")
     real_cond = IfCondition(real)
     not_real = UnlessCondition(real)
@@ -76,12 +81,14 @@ def generate_launch_description():
         "--ros-args",
         "--params-file",
         str(PARAMS),
+        "-p", ["position_scale_xyz:=[", pos_scale, ",", pos_scale, ",", pos_scale, "]"],
     ]
     return LaunchDescription(
         [
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("bridge", default_value="false"),
             DeclareLaunchArgument("bridge_impl", default_value="xrt"),
+            DeclareLaunchArgument("pos_scale", default_value="1.0"),
             DeclareLaunchArgument("real", default_value="false"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(A3_DEMO_LAUNCH)),
