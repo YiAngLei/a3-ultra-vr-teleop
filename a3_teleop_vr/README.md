@@ -1,24 +1,35 @@
 # a3_teleop_vr — A3 双臂流式 VR 遥操作
 
-复刻 `openarmx_teleop_vr` 控制范式的 A3 版：握住 grip **持续跟随**、松开即停。
-与 `a3_moveit_demo`（触发式：按一次键 → OMPL 规划 → 执行 → 停住）并存，互不干扰；
-如果本方案有问题，继续用 `a3_moveit_demo` 即可（其默认行为未做任何改变）。
+数据链与遥操作范式按 **XRoboToolkit 官方**（双 UR5 成熟案例）对齐：握住 grip **持续跟随**、
+松开即停；位姿为**房间锚定**数据，映射为**世界系增量**（`world_rotation` 默认即官方
+R_HEADSET_TO_WORLD）。与 `a3_moveit_demo`（触发式：按一次键 → OMPL 规划 → 执行 →
+停住）并存，互不干扰；如果本方案有问题，继续用 `a3_moveit_demo` 即可。
 
 ## 数据流
 
 ```
-Pico APK --UDP--> a3_teleop_bridge --/pico_*--> a3_streaming_teleop.py
-   (OpenArmX)    (本工程, 自研)                    |  MoveItPy IK (KDL, 当前状态作种子)
-                                                   v
-                                         /<side>_arm_controller/joint_trajectory
-                                                   |
-                                         ros2_control (mock 硬件, 100Hz)
-                                                   v
-                                         /joint_states + /tf + RViz
+PICO 眼镜（XRoboToolkit 官方 App, Head+Controller, Send ON）
+   --WiFi--> PC Service（/opt/apps/roboticsservice）
+   --SDK--> a3_xrt_bridge --/pico_*--> a3_streaming_teleop.py
+   （房间锚定位姿，官方同源）            |  世界系增量映射 + MoveItPy IK (KDL)
+                                        v
+                              /<side>_arm_controller/joint_trajectory
+                                        |
+                              ros2_control (mock 硬件, 100Hz)
+                                        v
+                              /joint_states + /tf + RViz
 ```
 
-报文接收端 `a3_teleop_bridge` 是本工程自研的兼容实现（见 `a3_teleop_bridge/README.md`），
-不再依赖 OpenArmX 的 bridge 节点；Pico 端的 App 仍来自 OpenArmX（见「开源与合规」）。
+桥接节点二选一（`bridge_impl:=xrt`（默认）/ `openarmx`）：
+
+- **a3_xrt_bridge（默认，推荐）**：收 XRoboToolkit PC Service 官方 SDK。
+  前提：先启动 PC Service（`bash /opt/apps/roboticsservice/runService.sh`），头显装
+  XRoboToolkit 官方 App 并勾选 Head+Controller、Send ON。位姿**房间锚定**（转头不改
+  手柄读数），与世界系增量映射配套。rate 调速档默认用**扳机当快进键**
+  （`-p rate_from_trigger:=false` 固定慢档）。
+- **a3_teleop_bridge（openarmx，对照/回退）**：兼容 OpenArmX APK 的 UDP 报文。
+  其位姿为 pico_hmd **头显系**（转头会耦合进增量），与世界系增量映射**不配套**，
+  仅供对照；`pose_source:=absolute` 也只在它有意义。
 
 `teleop_vr.launch.py` 直接 include `a3_moveit_demo` 的 `demo.launch.py`
 （传 `demo_plan:=false teleop:=none`，见那边新加的两个 launch 参数），
@@ -32,16 +43,19 @@ Pico APK --UDP--> a3_teleop_bridge --/pico_*--> a3_streaming_teleop.py
 export A3_MODEL_SRC=<含 urdf/ 与 meshes/ 的目录>   # 如 AimSim 工作区的 a3_ultra_isaaclab
 bash ../a3_moveit_demo/scripts/setup_robot_model.sh
 
-# Pico 头显：安装并运行 OpenArmX 的 VR App，目标 IP 指向本机
+# 1) 启动 PC Service（XRoboToolkit，常驻）
+bash /opt/apps/roboticsservice/runService.sh
 
-# 启动仿真栈 + 桥接 + 流式遥操作（一条命令）
+# 2) 头显：XRoboToolkit 官方 App，PC Service IP 指向本机，勾 Head+Controller，Send ON
+
+# 3) 启动仿真栈 + 桥接 + 流式遥操作（一条命令）
 cd a3_teleop_vr
 source setup_teleop_env.bash
-ros2 launch "$PWD"/launch/teleop_vr.launch.py bridge:=true
+ros2 launch "$PWD"/launch/teleop_vr.launch.py bridge:=true   # bridge_impl 默认 xrt
 ```
 
-若你更想继续用 OpenArmX 原版 bridge（`ros2 run openarmx_teleop_bridge_vr ...`），
-把 `bridge:=true` 去掉即可，两者发布完全相同的话题。
+无头显回归测试：`scripts/fake_pico_publisher.py` 直接发布 /pico_* 话题（与桥输出
+同名），bridge:=false 启动栈后运行即可，无需任何 VR 设备。
 
 ## 操作
 
