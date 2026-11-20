@@ -104,8 +104,8 @@ class XrtBridge(Node):
 
         for side in HANDS:
             raw = pose_fn[side]()
-            grip = float(grip_fn[side])
-            trig = float(trigger_fn[side])
+            grip = float(grip_fn[side]())
+            trig = float(trigger_fn[side]())
             self._grip_pub[side].publish(Float32(data=grip))
             self._trigger_pub[side].publish(Float32(data=trig))
             if self._rate_from_trigger:
