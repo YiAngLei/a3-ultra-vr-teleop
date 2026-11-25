@@ -267,3 +267,39 @@ PC 端 bridge 发布频率。访客 WiFi（Visitors 5.x 网段）开了 AP 隔�
 **新增脚本坑**：新 .cs 首次批处理构建时 .meta 未生成，首轮编译会报
 CS0246"找不到类型"但仍 EXIT=0 出 APK（静默错包！）——加脚本后必须构建两次、
 或以 errcount=0 + APK 时间戳为准才算数。
+
+### 2026-11-25 补记：M2.5 全链路闭环 ✅（自制 APK 位姿流驱动仿真）
+
+里程碑：自制客户端 `com.yianglei.vrteleop` 连接后，位姿流 → PC Service →
+a3_xrt_bridge → a3_streaming_teleop → RViz 双臂实时跟随，验证通过。
+
+**关键根因（排查链值得记住）**：
+1. 症状：头显显示"已连接 + 72Hz"，但 RViz 不动。72Hz 只是**主线程采集帧率**
+   （A3NetBridge.SampleRate 数的是 `SendTrackingData==true && State==WORKING` 的帧），
+   不代表 socket 实发成功——显示有频率≠数据在流，这个指标有误导性。
+2. 硬证据：`ss -ti state established '( sport = :63901 )'` 看 bytes_received，
+   卡在 75~135 字节（只有心跳包）→ 数据根本没出头显。
+3. **对照实验**（最有力一刀）：头显里装着的官方客户端 com.xrobotoolkit.client
+   连同一 PC Service → 机器人动。环境/桥/PC Service 全排除，问题锁死自制 APK 内部。
+4. **诊断窗定位**：给官方 TcpHandler 加只读诊断属性（DiagConnectInited/
+   DiagQueueCount/DiagSendTracking/DiagSendThreadAlive），状态栏实时显示。
+   读出 `inited=0 q=2 send=1 th=1`：采集在产（队列积压满）、线程活着、开关开着，
+   唯一缺的是握手包。
+5. **根因**：TcpHandler.ConnectCallback 仅在 `_deviceSN` 非空时调 ConnectInit
+   （发 CONNECT/VERSION 握手包）；VERSION 发出后才置 `_connectInited=true`，
+   而 tracking 发送分支有 `if (_connectInited && SendTrackingData)` 门槛。
+   SN 来自 `PXR_Enterprise.StateGetDeviceInfo(EQUIPMENT_SN)`——该**企业接口在
+   调试签名包上返回空字符串**（官方包能拿到真值）。SN 空 → 握手跳过 →
+   inited 恒 0 → tracking 永被拦截。
+6. 修复（v13k）：SN 为空时用 `SystemInfo.deviceUniqueIdentifier` 兜底
+   （PC Service 认"VERSION 包到达"这个行为，不校验 SN 内容）。
+   附带：HandTracking 开关保持 false（无体感追踪器；开着曾疑似中断采集）。
+
+**排障方法论沉淀**：
+- TCP 链路存否数据：`ss -ti` 的 bytes_received 两次采样对比，比猜快得多。
+- 黑盒内部状态可视化：加"诊断串"直接显示在头显 UI 上，用户念数字即可远程定位。
+- 先做对照实验（官方包/官方 APK）再怀疑自己的代码。
+- Unity 跨线程坑汇总：①后台线程 new GameObject 崩（Dispatcher 单例首次 Instance）
+  ②线程池 SemaphoreSlim 自锁 ③企业 API 调试签名返空——都在本项目踩实了。
+
+诊断属性与状态栏诊断串保留至 M3 前再清理。
