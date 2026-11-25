@@ -162,6 +162,10 @@ aimsim isaac start     # Isaac Sim 仿真（需另装 Isaac Sim 4.2 并设置 US
   `git reset --hard backup/pre-xrobot-refactor`
 - 启动/验证方式见 `a3_teleop_vr/README.md`（仿真回归用 `scripts/fake_pico_publisher.py`，
   无需头显/眼镜）
+- **VR 客户端工作区不在本仓库**：Unity 编辑器、XRoboToolkit 官方工程与自制
+  A3TeleopVR 工程都在 Windows/Linux 共用盘 `/media/ubuntu20/软件/Unity*`、
+  `…/UnityProjects/` 下（git 各自独立）。方案与路线变更记录见
+  `docs/custom-vr-apk-plan.md` §7。
 
 ## 8.1 机器人端部署位置（2026-11-20 增补）
 
