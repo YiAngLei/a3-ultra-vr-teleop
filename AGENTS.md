@@ -204,3 +204,28 @@ aimsim isaac start     # Isaac Sim 仿真（需另装 Isaac Sim 4.2 并设置 US
 
 背景：2026-11-20 映射重构后出现"目标坐标架多方向无法跟随/方向错乱"，
 用户判断不像标定问题。为避免在病因未确诊前继续动刀，立此规矩。
+
+## 10. 备忘与待办（长期）
+
+### 10.1 A3TeleopVR 仓库将来若要转公开（2026-11-25 记）
+- 现状：Unity 工程已推 `github.com/YiAngLei/A3TeleopVR`（**私有**），master+tag 齐全。
+- 背景：XRoboToolkit 官方客户端是 MIT 开源（保留根 LICENSE.txt 即可）；
+  但 `PICO Unity Integration SDK/` 目录是专有许可（禁止再分发）。
+- 转公开前必须做"排雷"：
+  1. `git filter-repo` 把 `PICO Unity Integration SDK/` 从历史**全部**清除并强推；
+  2. 加 `.gitignore`；README 注明"SDK 自行从 PICO 开发者平台下载后放到此目录"；
+  3. 审计 `Assets/Plugins` 下其余 PICO 二进制（tobframwork aar 等）是否同属 SDK。
+- 时机：用户决定公开时执行，不在功能开发期做历史改写。
+
+### 10.2 视频回传链路结论（M3-P0 摸底，2026-11-25）
+- XRobotToolkit 视频链**不走 ROS**：PC Service 无任何 ROS/DDS 库；
+  APK 发 `StartReceivePcCamera{ip=头显IP,port,...}`（RemoteCameraWindow.cs），
+  视频为裸 UDP 推流，头显端 PICO Java 库 MediaCodec 硬解（`MediaDecoder(UDP)`）。
+- 显示参数照抄 `~/xrt-config-backup/files/video_source.yml` 的 PICO4U 档。
+- 唯一未验证环：机器人端守护进程（待机器人上线后 `ps aux | grep -iE 'xrt|xrobot|pcp|agent'` 1分钟确认）。
+- 详情与 M3 计划：`docs/custom-vr-apk-plan.md`。
+
+### 10.3 代理排雷（2026-11-25）
+- 本机 Clash Verge 出口节点池有坏节点：对 github git 端点间歇 403/断流（API 正常）。
+- 推送前多重试或让用户在 Verge 里给 github.com 指定固定节点。
+- 环境全局带代理（http/https/ALL_PROXY=socks），"直连"测试前先 `env | grep -i proxy`。
