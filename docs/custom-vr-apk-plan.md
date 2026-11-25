@@ -149,3 +149,121 @@ vr-client/                      # 本方案产物（Unity 工程）
 
 *设计：2026-11-20 · 依据 XRoboToolkit-Unity-Client（MIT）源码勘察与 OpenArmX APK 界面参考。*
 *动工前请重读 `AGENTS.md` §9：先讨论、后动手。*
+
+
+---
+
+## 7. 路线变更日志
+
+### 2026-11-24：Spatial SDK 路线否决，回到 Unity；环境落地
+
+**否决记录**：曾调研 PICO Spatial SDK（原生 Android/Kotlin，spatial-ui 组件 +
+spatial-video SBS 立体）作为 Unity 的替代。闸口检查不通过：头显为 **PICO OS
+5.15.4**（Android 14，API 34，2026-01 构建），而 Spatial SDK 要求 **PICO OS 6+**
+（示例 minSdk=35 / Android 15）。OS 6 是 2026-03 预告的下一代空间系统，绑定新旗舰
+"Project Swan" 封闭先锋测试，PICO 4 Ultra 无升级渠道。结论：该路线在现有设备上
+不可行，仅留档（SpatialUI 示例克隆在 `~/AimSim/vr-client/reference/`，已 gitignore）。
+
+**实际环境（本机）**：
+
+| 项 | 位置/值 |
+|---|---|
+| Unity 编辑器 | **2022.3.16f1**（changeset `d2c21f0ef2f1`，照官方客户端工程锁定），含 Android Build Support |
+| 安装根 | `/media/ubuntu20/软件/Unity/editors`（Windows/Linux 共用 NTFS 盘，459G 可用；根分区零占用） |
+| 编辑器下载 | Unity CLI 直链 `download.unity3d.com/.../Unity-2022.3.16f1.tar.xz`，curl `-C -` 断点续传（CLI 自带下载在国内网络会被 TLS reset） |
+| Unity CLI | `~/.local/bin/unity`（`unity.com/install.sh`，免 sudo）；登录身份 cs1759328280@gmail.com，Personal 许可证已激活 |
+| 官方参考工程 | `/media/ubuntu20/软件/UnityProjects/XRoboToolkit-Unity-Client`（zip 方式取得；含 `Assets/Scripts/Network/` 协议层与 vendor 的 PICO Unity Integration SDK） |
+| 自制客户端规划位置 | `/media/ubuntu20/软件/UnityProjects/A3TeleopVR`（独立 git 仓库，建成后推到 YiAngLei 名下） |
+| Android SDK（备用） | `~/Android/Sdk`（platform-35 / build-tools 35 已装） |
+
+**侦察副产物（影响后续里程碑）**：
+
+1. **A3 官方相机接口**（aimdk v3.3 文档 `07-06-sensor_data`）：机器人已在 ROS2 话题上
+   发布全部相机的 **H265 编码流**（`foxglove_msgs/CompressedVideo`）——头部双目左右各
+   一路 2400×1800@30、胸前 D457 / 腰前 D415 为 720p@30。M3 视频推流端**不需要在机器人
+   上装任何编码器**，只需订阅转发；注意本机系统是 v3.2，话题存在性需只读验证。
+2. **OpenArmX APK 技术栈**：纯原生 C++ OpenXR（Khronos "BasicDemo" 骨架，`classes.dex`
+   仅 2.9KB），**闭源**（CC BY-NC-SA，仅分发二进制）。它**自带视频接收端**（头+双手
+   相机，UDP 5600/5601/5602，H264）——是视频链路的最短验证路径，但 codec 与 A3 的
+   H265 不匹配，需转码或实测兼容性；且为平面面板非双目分眼。
+3. **OpenArmX 桥出局**：`bridge_impl` 双选保留 xrt 唯一有效路径；openarmx 分支待自制
+   客户端跑通后删除（用户已定调，删除前会再确认）。
+
+*§2 的 Unity 2022.3 LTS、M1/M2/M3 里程碑与"协议层原样复用"基调继续有效；本日志仅
+修正实现路径与补充环境事实。*
+
+### 2026-11-24 补记：M1 协议验证闭环 ✅
+
+自建 APK（`xrt-client-debug.apk`，官方工程 + SimpleBuild.cs 单产物调试构建）在
+PICO 4 Ultra 上跑通全链路：头显 TCP 63901 → PC Service → xrobotoolkit_sdk →
+`a3_xrt_bridge/a3_xrt_bridge_node.py` → `/pico_<side>_controller/pose` **100Hz**
+（双手柄+扳机实测 99.99~100.02Hz，超预期 72Hz；房间锚定系）。
+
+本机 toolchain 踩坑全记录（后续构建照此办理）：
+1. **Unity 编辑器/Android 模块**：CLI 自带下载被 GFW 掐流（TLS reset），改 curl
+   `-C -` 断点续传手动装；Android 主模块官方 feed 只给 mac .pkg（连 Hub 数据也
+   一样），按 manifest 子组件（dl.google.com 可达）+ 解 pkg Payload 手动落位
+   `Editor/Data/PlaybackEngines/AndroidPlayer/`。
+2. **代理**：本机 Clash 端口 **127.0.0.1:7897**。Unity 编辑器/UPM 认
+   `HTTPS_PROXY` 环境变量；**gradle 不认环境变量**，必须写
+   `~/.gradle/gradle.properties`（systemProp.http/https.proxyHost/Port）。
+3. **非 ASCII 路径**：Android 构建硬性拒绝中文路径——`/media/ubuntu20/软件` 已
+   bind 挂载 `/mnt/soft`（fstab 持久化），Unity 工程一律走 `/mnt/soft/...`。
+4. **签名**：原工程 PlayerSettings 带自定义 keystore（密码不可得），构建脚本里
+   `PlayerSettings.Android.useCustomKeystore = false` 改调试签名。
+5. **PC Service 会卡死**：`RoboticsServiceProcess` 老进程可能不监听 63901，
+   症状"connect error"——pkill 后用 `/opt/apps/roboticsservice/runService.sh`
+   重启即恢复。
+6. **别起错桥**：`a3_teleop_bridge`（OpenArmX UDP）与 `a3_xrt_bridge`（官方
+   SDK）是两个节点，M1 以后一律用后者。
+7. 头显换包提示：卸载官方包前已备份 `files/video_source.yml` 等至
+   `~/xrt-config-backup/`（内含官方双目 SBS 渲染 shader 参数，M3 参考）；
+   企业版透视相机库 `libpxr_xrsdk_native` 在自建包缺失（DllNotFoundException，
+   非致命，M3 不用它）。
+
+### 2026-11-25 补记：M2（自制 UI 交互）+ M2.5（真连接）闭环 ✅
+
+自制客户端工程 `XRoboToolkit-Unity-Client` 的副本 **`A3TeleopVR`**
+（`/mnt/soft/UnityProjects/A3TeleopVR`，已建 git；官方工程原封不动作参照）。
+包名 `com.yianglei.vrteleop`，与官方包并存头显。单场景 `A3Main.unity`
+（复制自 Main.unity，禁用 UIOperate/CameraSource/SlitView/LogWindow/AndroidProxy，
+注入 A3UI 根挂 `A3UiBootstrap`）。
+
+**UI 交互定案（v10 趟通，v11 清理后 ~200 行）**——全部界面运行时代码构建：
+IP 输入框 + ▼发现下拉(mock) + 3×4 数字键盘(0./⌫) + 连接按钮 + 状态/发送频率 +
+底部"A 键进入机器人视角"大字。交互链路（勿回退）：
+`官方 rig 的 XRRayInteractor + XRUIInputModule → 画布上挂 PICO 官方
+TrackedDeviceGraphicRaycasterEventCamera（com.picoxr.tobframwork.UI）+ GraphicRaycaster，
+worldCamera 运行时继承官方（已禁用）画布的 worldCamera（=rig 内中央相机）`。
+三个血泪要点：
+1. **所有 Text raycastTarget=false**——代码创建的 Text 默认 true，会盖在按钮
+   上层截走射线，且 uGUI 事件不冒泡，按钮永远收不到点击（v2–v9 的"射线穿面板/
+   点不动"的真正根因，其余什么 worldCamera/注册时机全是噪音）。
+2. **全部 UI 元素 layer=5**（官方 UIOperate 同款；DefaultRaycastLayers 虽含
+   layer0，但要对齐官方）。
+3. **别自己造 EventSystem**——官方 prefab（PICO XR Interaction Setup）里那套
+   是验证过的；只在其完全缺失时新建补齐，绝不删除/禁用/重建。
+
+**M2.5 真连接（7813403）**：新增 `A3NetBridge.cs`（~60 行）组装官方验证过的
+组件，一行官方代码不改：
+- `FPSDisplay` 必须有实例——TcpHandler 发送线程每发一帧调其 static
+  `UpdateTime()`，stopwatch 在 Awake new，缺实例则发送线程 NRE 自杀（隐藏依赖）。
+- `TcpHandler.SetDeviceSn(sn)` 必须先于 Connect——ConnectCallback 仅在
+  _deviceSN 非空时发握手包（PACKET_CCMD_CONNECT / SEND_VERSION）；
+  SN 用 `PXR_Enterprise.StateGetDeviceInfo(SystemInfoEnum.EQUIPMENT_SN)`。
+- 位姿开关显式全开 `TrackingData.SetHeadOn/SetControllerOn/SetHandTrackingOn`
+  （UIOperate 被禁用，没人替我们开；TrackingType 保持 None——无体感追踪器）。
+- 连接按钮 → `TcpHandler.Connect(ip)`（63901，协议原样）；状态轮询
+  `SocketState` 状态机；频率=主线程采集帧率（链路不积压时==PC 端实测接收频率）。
+- 断开 = `SendTrackingData=false + Close()`；IP 先用 IPAddress.TryParse 校验
+  （TcpHandler 的 Parse 在 try 外，格式错会炸主线程）。
+
+**实测（2026-11-25）**：手机热点组网（电脑 wlp0s20f3=192.168.43.5、头显
+wlan0=192.168.43.11），头显填 192.168.43.5 点连接 → 状态"已连接"、**72 Hz**。
+注意：72Hz=头显渲染帧率（Update 每帧采集一次），不是 bug；M1 的"100Hz"是
+PC 端 bridge 发布频率。访客 WiFi（Visitors 5.x 网段）开了 AP 隔离，客户端
+互访全断——组网必须用手机热点或主网络。
+
+**新增脚本坑**：新 .cs 首次批处理构建时 .meta 未生成，首轮编译会报
+CS0246"找不到类型"但仍 EXIT=0 出 APK（静默错包！）——加脚本后必须构建两次、
+或以 errcount=0 + APK 时间戳为准才算数。
