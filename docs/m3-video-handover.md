@@ -155,3 +155,20 @@ A3RobotView 双眼常驻版），**未经真机验证**（测试被系统面板�
 | `/mnt/soft/UnityProjects/A3TeleopVR` | 自制遥操作 APK（Unity，M2.5 遥操作可用；视频待融合） |
 | `~/AimSim/` | ROS 侧工程 + docs（custom-vr-apk-plan.md / teleop-runbook.md / robot-side-inventory.md / **本文档**） |
 | `~/AimSim/AGENTS.md` | 项目铁律（§9 先讨论再动 AimSim；§8.2 机器人端五规矩）+ §10 备忘，**接手先通读** |
+
+## 6. 给 GPT 的起步第一条消息（用户原样发送）
+
+```
+你是接手这个项目的工程师。工作目录是 ~（/home/ubuntu20）。请按以下顺序开始：
+
+1. 通读 ~/AimSim/docs/m3-video-handover.md（本项目的全部上下文、坑位清单、环境速查）
+   和 ~/AimSim/AGENTS.md（项目铁律，§8.2 机器人端规矩、§9 先讨论再改代码、§10 备忘）。
+2. 学习目标方案 ~/video_viewer/（README.md → app/StereoActivity.java → relay/serve.py →
+   build.sh），它在 PICO 4 Ultra 上已验证可用：双目 h265 实时视频。
+3. 目标：把 video_viewer 的视频能力融合进自制 Unity 工程 A3TeleopVR
+   （/mnt/soft/UnityProjects/A3TeleopVR，git 仓库 YiAngLei/A3TeleopVR，master=干净基线），
+   要求：最终一个 APK，保留现有 A 键两段确认交互（待机→按A→3秒安全提示→再按A→
+   全屏机器人视角→按A退出，代码在 Assets/A3Teleop/A3RobotView.cs），视频用
+   MediaCodec 直解 hevc（不要转码、不要官方 robotassistantlib——它写死只认 h264）。
+4. 开工前先向我复述你的方案和改动点，我批准后再动手。
+```
