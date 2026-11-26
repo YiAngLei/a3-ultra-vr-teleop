@@ -34,3 +34,15 @@
 | 路径 | 说明 | 删除日期 |
 |---|---|---|
 | `/home/agi/a3_robot_teleop/` | 误部署到系统盘 home（会被定期清理），已改放数据盘 | 2026-11-20 |
+
+## 2026-11-26 增补
+
+### /agibot/data/home/agi/Desktop/video_viewer/（保留，运行中）
+- 双目 h265 视频转发器（serve.py + run.sh），端口 12450，订阅
+  `/hal/head_stereo_{left,right}_fisheye_camera/stream`（ROS 域 232）。
+- 由 video_viewer 工程部署（`~/video_viewer/relay/`），当前方案基线。
+- 注意：机器人重启后需重新启动（`nohup bash run.sh`）。
+
+### /agibot/data/home/agi/Desktop/orin_video_sender/（废弃，待用户批准删除）
+- 早期自研 h265→h264 转码链全套（OrinVideoSender 二进制、各 forwarder/封包脚本、
+  测试文件与日志）。2026-11-26 起被 video_viewer 方案取代，全部文件不再使用。

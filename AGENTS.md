@@ -239,3 +239,9 @@ aimsim isaac start     # Isaac Sim 仿真（需另装 Isaac Sim 4.2 并设置 US
 - 本机 Clash Verge 出口节点池有坏节点：对 github git 端点间歇 403/断流（API 正常）。
 - 推送前多重试或让用户在 Verge 里给 github.com 指定固定节点。
 - 环境全局带代理（http/https/ALL_PROXY=socks），"直连"测试前先 `env | grep -i proxy`。
+
+### 10.4 视频链基线变更（2026-11-26 晚）
+- **基线已切换**：video_viewer（`~/video_viewer/`，机器人端 Desktop/video_viewer/）
+  打通双目 h265 视频（原生 OpenXR + MediaCodec 直解 hevc，不转码）。
+  详细交接（架构/坑位清单/下一步 P0-P2）：`docs/m3-video-handover.md` —— 接手必读。
+- 旧自研转码链（Desktop/orin_video_sender/）废弃待清理。
