@@ -80,9 +80,12 @@ M3 目标：同一个自制 APK 里实现 **A 键两段确认进入机器人视�
 video_viewer 证明了"视频该这么做"，但它是**独立原生 App**，还没有：
 ① 与遥操作合体；② A 键安全互锁；③ 鱼眼矫正；④ 左右眼时间戳配对。
 
-**A3TeleopVR 现状**：master 分支，最新构建 V5（`A3RobotView.cs`：A 键状态机 ✓、
-头部位姿全屏面片 ✓、`A3/StereoVideo` 立体分屏 shader ✓、解码仍用官方 h264 库 ✗）。
-Unity 工程：`/mnt/soft/UnityProjects/A3TeleopVR`（共用盘，git 独立）。
+**A3TeleopVR 现状**（2026-11-26 收班态）：master 分支已提交 `c666cf7`（V5 基线：
+A 键状态机 ✓、官方 h264 常驻解码、头部位姿全屏、立体分屏 shader ✓）。
+**另有 `wip/video-merge` 分支（`ee8ae0f`）**：video_viewer 融合版全套
+（A3VideoEye.java MediaCodec-hevc 移植 + A3StereoVideoDual.shader 双眼双纹理 +
+A3RobotView 双眼常驻版），**未经真机验证**（测试被系统面板打断）。GPT 接手建议直接
+在该分支上改，少走弯路。Unity 工程：`/mnt/soft/UnityProjects/A3TeleopVR`（共用盘）。
 
 ---
 
