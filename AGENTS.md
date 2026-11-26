@@ -222,7 +222,13 @@ aimsim isaac start     # Isaac Sim 仿真（需另装 Isaac Sim 4.2 并设置 US
   APK 发 `StartReceivePcCamera{ip=头显IP,port,...}`（RemoteCameraWindow.cs），
   视频为裸 UDP 推流，头显端 PICO Java 库 MediaCodec 硬解（`MediaDecoder(UDP)`）。
 - 显示参数照抄 `~/xrt-config-backup/files/video_source.yml` 的 PICO4U 档。
-- 唯一未验证环：机器人端守护进程（待机器人上线后 `ps aux | grep -iE 'xrt|xrobot|pcp|agent'` 1分钟确认）。
+- 机器人端验证（2026-11-26 完成）：**无独立 xrt/xrobot 守护进程**；机器人跑 aimdk v0 服务族
+  （`agent` 管理器 :59301、`hdu_camera_module` 相机 HAL、`hal_remote` 官方VR遥操作HAL——
+  ros2 topic `/remote/vr_data`、`/remote/vr_data/raw`、`/remote/vr_button`，
+  另有 `teleop_midas`/`teleop_avatar`/`webrtc`/`echo`/`playback` 服务）。
+  61110-61112 端口是 NFS（红鲱鱼），65400 组播是 aimdk 内部总线。
+- 残余待验证（并入 M3-P1）：视频开流时在机器人上 `sudo tcpdump` 看 `StartReceivePcCamera`
+  到底由哪个进程应答、视频 UDP 从谁发出。
 - 详情与 M3 计划：`docs/custom-vr-apk-plan.md`。
 
 ### 10.3 代理排雷（2026-11-25）
